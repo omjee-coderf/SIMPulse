@@ -1,0 +1,413 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+
+  <!-- ── SEO ── -->
+  <title>SIMPulse — International SIM Sales Analytics Dashboard</title>
+  <meta name="description"
+        content="SIMPulse: Global SIM Sales Intelligence. Monitor destination performance, revenue trends, ARPU, and market opportunities." />
+  <meta name="application-name" content="SIMPulse" />
+  <meta name="theme-color"      content="#1d4ed8" />
+
+  <!-- ── Styles ── -->
+  <link rel="stylesheet" href="css/style.css" />
+
+  <!-- ── Supabase & Auth SDK ── -->
+  <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/dist/umd/supabase.min.js"></script>
+  <script src="js/auth.js"></script>
+
+  <!-- ── Chart.js CDN ── -->
+  <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.2/dist/chart.umd.min.js"></script>
+</head>
+
+<body>
+
+  <!-- ══════════════════════════════════════════════════════
+       LOADING OVERLAY
+  ════════════════════════════════════════════════════════ -->
+  <div id="loadingOverlay" role="status" aria-live="polite">
+    <div class="loading-spinner" aria-hidden="true"></div>
+    <p class="loading-text">Fetching sales data&hellip;</p>
+  </div>
+
+  <!-- ══════════════════════════════════════════════════════
+       SITE HEADER
+  ════════════════════════════════════════════════════════ -->
+  <header class="site-header" role="banner">
+    <div class="header-inner">
+
+      <!-- Brand -->
+      <div class="header-brand">
+        <div class="brand-logo" aria-hidden="true">
+          <!-- Signal / pulse icon -->
+          <svg viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg">
+            <path d="M1 12h3l3-7 4 14 3-10 2 3h7"/>
+          </svg>
+        </div>
+        <div class="brand-text">
+          <div class="brand-name">SIM<span>Pulse</span></div>
+          <div class="brand-tagline">Global SIM Sales Intelligence</div>
+        </div>
+      </div>
+
+      <!-- Controls -->
+      <div class="header-controls">
+        <span class="header-timestamp" id="lastUpdated">Last updated: —</span>
+        <div class="divider" aria-hidden="true"></div>
+
+        <!-- User Profile & Admin Navigation -->
+        <a href="admin.html" class="btn btn-secondary hidden" id="adminPortalBtn" title="Go to Admin Dashboard">
+          <span class="btn-icon">⚙️</span>
+          <span>Admin Portal</span>
+        </a>
+
+        <div class="user-profile-pill" id="userProfilePill">
+          <span class="user-avatar" id="headerUserAvatar">U</span>
+          <div class="user-details">
+            <span class="user-email" id="headerUserEmail">user@simpulse.com</span>
+            <span class="user-role-badge" id="headerUserRole">USER</span>
+          </div>
+        </div>
+
+        <button class="btn btn-outline-danger" id="logoutBtn" title="Sign Out of SIMPulse">
+          <span class="btn-icon">🚪</span>
+          <span>Sign Out</span>
+        </button>
+
+        <button class="btn btn-secondary" id="exportBtn" title="Export table to CSV">
+          <span class="btn-icon">↓</span>
+          <span>Export CSV</span>
+        </button>
+        <button class="btn btn-primary" id="refreshBtn" title="Refresh dashboard data">
+          <span class="btn-icon">↺</span>
+          <span>Refresh</span>
+        </button>
+      </div>
+    </div>
+
+    <!-- Filter Bar -->
+    <div class="filter-bar" role="search" aria-label="Dashboard filters">
+
+      <div class="filter-group">
+        <label class="filter-label" for="filterDestination">Destination</label>
+        <select class="filter-select" id="filterDestination" title="Filter by destination">
+          <option value="all">All Destinations</option>
+          <!-- Populated dynamically by dashboard.js -->
+        </select>
+      </div>
+
+      <div class="filter-group">
+        <label class="filter-label" for="filterDateRange">Period</label>
+        <select class="filter-select" id="filterDateRange" title="Select reporting period">
+          <option value="current">Current Period</option>
+          <option value="last30">Last 30 Days</option>
+          <option value="last90">Last 90 Days</option>
+          <option value="ytd">Year to Date</option>
+        </select>
+      </div>
+
+    </div>
+  </header>
+
+  <!-- ══════════════════════════════════════════════════════
+       ERROR BANNER  (hidden by default)
+  ════════════════════════════════════════════════════════ -->
+  <div id="errorBanner" class="hidden" role="alert" aria-live="assertive">
+    <span class="error-icon" aria-hidden="true">⚠</span>
+    <div>
+      <p class="error-title">Unable to load dashboard data</p>
+      <p id="errorText">Please check your API endpoint configuration in js/api.js and try again.</p>
+    </div>
+    <button class="error-retry-btn" onclick="loadDashboard()">Retry</button>
+  </div>
+
+  <!-- ══════════════════════════════════════════════════════
+       MAIN DASHBOARD  (hidden until data loads)
+  ════════════════════════════════════════════════════════ -->
+  <main class="page-main hidden" id="dashboardContent" role="main">
+
+    <!-- ─────────────────────────────────────────────────
+         1. EXECUTIVE KPI CARDS
+    ───────────────────────────────────────────────────── -->
+    <section class="dashboard-section" aria-label="Executive KPIs">
+      <div class="section-header">
+        <h1 class="section-title">Performance Overview</h1>
+        <span class="section-subtitle">Aggregated across all active destinations</span>
+      </div>
+
+      <div class="kpi-grid" role="list">
+
+        <!-- Total Orders -->
+        <div class="kpi-card" id="kpiOrders" role="listitem">
+          <div class="kpi-card-header">
+            <span class="kpi-label">Total Orders</span>
+            <span class="kpi-badge kpi-badge--neutral" aria-hidden="true">●</span>
+          </div>
+          <div class="kpi-value" aria-live="polite">—</div>
+          <div class="kpi-sublabel">—</div>
+        </div>
+
+        <!-- Total Revenue -->
+        <div class="kpi-card" id="kpiRevenue" role="listitem">
+          <div class="kpi-card-header">
+            <span class="kpi-label">Total Revenue</span>
+            <span class="kpi-badge kpi-badge--neutral" aria-hidden="true">●</span>
+          </div>
+          <div class="kpi-value" aria-live="polite">—</div>
+          <div class="kpi-sublabel">—</div>
+        </div>
+
+        <!-- Average ARPU -->
+        <div class="kpi-card" id="kpiARPU" role="listitem">
+          <div class="kpi-card-header">
+            <span class="kpi-label">Avg. ARPU</span>
+            <span class="kpi-badge kpi-badge--neutral" aria-hidden="true">●</span>
+          </div>
+          <div class="kpi-value" aria-live="polite">—</div>
+          <div class="kpi-sublabel">—</div>
+        </div>
+
+        <!-- Top Destination -->
+        <div class="kpi-card" id="kpiTopDest" role="listitem">
+          <div class="kpi-card-header">
+            <span class="kpi-label">Top Destination</span>
+            <span class="kpi-badge kpi-badge--neutral" aria-hidden="true">●</span>
+          </div>
+          <div class="kpi-value" aria-live="polite">—</div>
+          <div class="kpi-sublabel">—</div>
+        </div>
+
+      </div>
+    </section>
+
+    <!-- ─────────────────────────────────────────────────
+         2. DESTINATION PERFORMANCE TABLE
+    ───────────────────────────────────────────────────── -->
+    <section class="dashboard-section" aria-label="Destination Performance Table">
+      <div class="section-header">
+        <h2 class="section-title">Destination Performance</h2>
+        <span class="section-subtitle">Click column headers to sort</span>
+      </div>
+
+      <div class="card">
+
+        <!-- Toolbar -->
+        <div class="table-toolbar">
+          <div class="table-toolbar-left">
+            <div class="table-search-wrap">
+              <span class="table-search-icon" aria-hidden="true">🔍</span>
+              <input
+                class="filter-input"
+                id="tableSearch"
+                type="search"
+                placeholder="Search destinations…"
+                aria-label="Search destinations"
+                autocomplete="off"
+              />
+            </div>
+            <span class="table-count" id="tableCount" aria-live="polite">— destinations</span>
+          </div>
+        </div>
+
+        <!-- Table -->
+        <div class="table-scroll-wrap">
+          <table class="data-table" id="destTable" aria-label="Destination performance data">
+            <thead id="destTableHead">
+              <tr>
+                <th data-col="destination"         class="td-left"  >Destination<span class="sort-icon"> ⇅</span></th>
+                <th data-col="current_orders"      class="td-right" >Current Orders<span class="sort-icon"> ⇅</span></th>
+                <th data-col="current_revenue"     class="td-right" >Current Revenue<span class="sort-icon"> ⇅</span></th>
+                <th data-col="prev_orders"         class="td-right" >Prev. Orders<span class="sort-icon"> ⇅</span></th>
+                <th data-col="prev_revenue"        class="td-right" >Prev. Revenue<span class="sort-icon"> ⇅</span></th>
+                <th data-col="order_growth_pct"    class="td-right" >Order Growth %<span class="sort-icon"> ⇅</span></th>
+                <th data-col="revenue_growth_pct"  class="td-right" >Revenue Growth %<span class="sort-icon"> ⇅</span></th>
+                <th data-col="arpu"                class="td-right" >ARPU<span class="sort-icon"> ⇅</span></th>
+                <th data-col="market_share_pct"    class="td-right" >Market Share %<span class="sort-icon"> ⇅</span></th>
+                <th data-col="opportunity_category" class="td-center">Opportunity<span class="sort-icon"> ⇅</span></th>
+              </tr>
+            </thead>
+            <tbody id="destTableBody">
+              <tr>
+                <td colspan="10" class="table-empty">Loading data…</td>  
+              </tr>
+            </tbody>
+          </table>
+        </div>
+
+      </div>
+    </section>
+
+    <!-- ─────────────────────────────────────────────────
+         3. CHARTS — ROW 1: Revenue Growth + Market Share
+    ───────────────────────────────────────────────────── -->
+    <section class="dashboard-section" aria-label="Revenue and Market Charts">
+      <div class="section-header">
+        <h2 class="section-title">Revenue &amp; Market Analysis</h2>
+      </div>
+
+      <div class="charts-2col">
+
+        <!-- Revenue Growth Bar Chart -->
+        <div class="chart-card">
+          <div class="chart-card-header">
+            <div>
+              <div class="chart-title">Revenue Growth by Destination</div>
+              <div class="chart-description">Period-over-period revenue growth percentage</div>
+            </div>
+          </div>
+          <div class="chart-body">
+            <div class="chart-wrapper h-320">
+              <canvas id="revenueGrowthChart" aria-label="Revenue growth bar chart"></canvas>
+            </div>
+          </div>
+        </div>
+
+        <!-- Market Share Donut Chart -->
+        <div class="chart-card">
+          <div class="chart-card-header">
+            <div>
+              <div class="chart-title">Market Contribution</div>
+              <div class="chart-description">Revenue share by destination</div>
+            </div>
+          </div>
+          <div class="chart-body">
+            <div class="chart-wrapper h-320">
+              <canvas id="marketShareChart" aria-label="Market share donut chart"></canvas>
+            </div>
+          </div>
+        </div>
+
+      </div>
+    </section>
+
+    <!-- ─────────────────────────────────────────────────
+         4. ARPU Performance (full width)
+    ───────────────────────────────────────────────────── -->
+    <section class="dashboard-section" aria-label="ARPU Performance">
+      <div class="section-header">
+        <h2 class="section-title">ARPU Performance</h2>
+        <span class="section-subtitle">Average Revenue Per Order by destination</span>
+      </div>
+
+      <div class="chart-card chart-full">
+        <div class="chart-card-header">
+          <div>
+            <div class="chart-title">ARPU Ranking — All Destinations</div>
+            <div class="chart-description">Identifies premium and high-value markets</div>
+          </div>
+        </div>
+        <div class="chart-body">
+          <div class="chart-wrapper h-420">
+            <canvas id="arpuChart" aria-label="ARPU horizontal bar chart"></canvas>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- ─────────────────────────────────────────────────
+         5. CHARTS — ROW 2: Opportunity Matrix + Rev vs Orders
+    ───────────────────────────────────────────────────── -->
+    <section class="dashboard-section" aria-label="Strategic Charts">
+      <div class="section-header">
+        <h2 class="section-title">Strategic Analysis</h2>
+        <span class="section-subtitle">Opportunity mapping and revenue-order relationships</span>
+      </div>
+
+      <div class="charts-2col">
+
+        <!-- Opportunity Matrix -->
+        <div class="chart-card">
+          <div class="chart-card-header">
+            <div>
+              <div class="chart-title">Opportunity Matrix</div>
+              <div class="chart-description">Revenue vs. growth — identifies strategic priorities</div>
+            </div>
+          </div>
+          <div class="chart-body">
+            <div class="chart-wrapper h-360">
+              <canvas id="opportunityChart" aria-label="Opportunity matrix scatter chart"></canvas>
+            </div>
+          </div>
+          <!-- Legend -->
+          <div class="opp-legend" aria-label="Opportunity categories">
+            <div class="opp-legend-item">
+              <span class="opp-legend-dot opp-legend-dot--INVEST"></span>
+              <span><strong>INVEST</strong> — High growth + High revenue</span>
+            </div>
+            <div class="opp-legend-item">
+              <span class="opp-legend-dot opp-legend-dot--MAINTAIN"></span>
+              <span><strong>MAINTAIN</strong> — Low growth + High revenue</span>
+            </div>
+            <div class="opp-legend-item">
+              <span class="opp-legend-dot opp-legend-dot--EXPLORE"></span>
+              <span><strong>EXPLORE</strong> — High growth + Low revenue</span>
+            </div>
+            <div class="opp-legend-item">
+              <span class="opp-legend-dot opp-legend-dot--FIX"></span>
+              <span><strong>FIX</strong> — Low growth + Low revenue</span>
+            </div>
+          </div>
+        </div>
+
+        <!-- Revenue vs Orders -->
+        <div class="chart-card">
+          <div class="chart-card-header">
+            <div>
+              <div class="chart-title">Revenue vs. Order Volume</div>
+              <div class="chart-description">Identifies high-volume and high-value markets</div>
+            </div>
+          </div>
+          <div class="chart-body">
+            <div class="chart-wrapper h-360">
+              <canvas id="revenueOrderChart" aria-label="Revenue vs orders scatter chart"></canvas>
+            </div>
+          </div>
+        </div>
+
+      </div>
+    </section>
+
+    <!-- ─────────────────────────────────────────────────
+         6. SALES OBSERVATIONS
+    ───────────────────────────────────────────────────── -->
+    <section class="dashboard-section" aria-label="Sales Observations">
+      <div class="section-header">
+        <h2 class="section-title">Sales Observations</h2>
+        <span class="section-subtitle">Data-driven findings for this reporting period</span>
+      </div>
+
+      <div class="card">
+        <div class="card-body">
+          <div class="obs-grid" id="observationsList" aria-live="polite">
+            <!-- Populated by dashboard.js → renderObservations() -->
+          </div>
+        </div>
+      </div>
+    </section>
+
+  </main>
+
+  <!-- ══════════════════════════════════════════════════════
+       FOOTER
+  ════════════════════════════════════════════════════════ -->
+  <footer class="site-footer" role="contentinfo">
+    <div class="footer-brand">SIM<span>Pulse</span></div>
+    <div class="footer-copy">
+      International SIM Sales Analytics &mdash; Internal Use Only
+    </div>
+  </footer>
+
+  <!-- ══════════════════════════════════════════════════════
+       SCRIPTS  (order matters)
+       1. api.js      — endpoint config + fetch utilities
+       2. charts.js   — Chart.js render functions
+       3. dashboard.js — controller + orchestration
+  ════════════════════════════════════════════════════════ -->
+  <script src="js/api.js"></script>
+  <script src="js/charts.js"></script>
+  <script src="js/dashboard.js"></script>
+
+</body>
+</html>

@@ -1,0 +1,422 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+
+  <!-- ── SEO & Meta ── -->
+  <title>SIMPulse — Enterprise Authentication &amp; User Access</title>
+  <meta name="description" content="SIMPulse Portal — Enterprise Access Control, User Registration, and Role-Based Authentication." />
+  <meta name="theme-color" content="#1d4ed8" />
+
+  <!-- ── Styles ── -->
+  <link rel="stylesheet" href="css/style.css" />
+
+  <!-- ── Supabase JS SDK CDN ── -->
+  <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/dist/umd/supabase.min.js"></script>
+
+  <!-- ── Auth Module ── -->
+  <script src="js/auth.js"></script>
+</head>
+
+<body class="auth-body">
+
+  <div class="auth-container">
+    
+    <!-- Header / Brand -->
+    <div class="auth-header">
+      <div class="auth-brand">
+        <div class="auth-logo-icon" aria-hidden="true">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <path d="M1 12h3l3-7 4 14 3-10 2 3h7"/>
+          </svg>
+        </div>
+        <div class="auth-brand-name">SIM<span>Pulse</span></div>
+      </div>
+      <p class="auth-tagline">International SIM Sales Intelligence</p>
+    </div>
+
+    <!-- Main Card Container -->
+    <div class="auth-card">
+
+      <!-- Navigation Tabs (Sign In / Create User Account) -->
+      <div class="auth-tab-nav" role="tablist">
+        <button class="auth-tab-btn active" id="tabBtnLogin" onclick="showAuthView('login')" role="tab">Sign In</button>
+        <button class="auth-tab-btn" id="tabBtnSignup" onclick="showAuthView('signup')" role="tab">Create User Account</button>
+      </div>
+
+      <!-- Alert Banners -->
+      <div id="authErrorBanner" class="auth-alert hidden" role="alert">
+        <span class="auth-alert-icon">⚠</span>
+        <span id="authErrorMsg">Invalid email or password. Please try again.</span>
+      </div>
+
+      <div id="authSuccessBanner" class="auth-alert auth-alert--success hidden" role="alert">
+        <span class="auth-alert-icon">✓</span>
+        <span id="authSuccessMsg">Account created successfully!</span>
+      </div>
+
+      <!-- ══════════════════════════════════════════════════════
+           VIEW 1: SIGN IN FORM
+      ════════════════════════════════════════════════════════ -->
+      <div id="viewLogin" class="auth-view active">
+        <div class="auth-card-header">
+          <h1 class="auth-title">Account Sign In</h1>
+          <p class="auth-subtitle">Enter your enterprise credentials to access SIMPulse</p>
+        </div>
+
+        <!-- Login Form -->
+        <form id="loginForm" onsubmit="handleLoginSubmit(event)">
+          <div class="form-group">
+            <label class="form-label" for="email">Enterprise Email</label>
+            <input
+              type="email"
+              id="email"
+              class="form-input"
+              placeholder="name@company.com"
+              required
+              autocomplete="email"
+            />
+          </div>
+
+          <div class="form-group">
+            <div class="form-label-row">
+              <label class="form-label" for="password">Password</label>
+              <a href="#" class="form-link-muted" onclick="openForgotPasswordModal(); return false;">Forgot password?</a>
+            </div>
+            <div class="password-input-wrap">
+              <input
+                type="password"
+                id="password"
+                class="form-input"
+                placeholder="••••••••"
+                required
+                autocomplete="current-password"
+              />
+              <button type="button" class="btn-toggle-password" onclick="togglePasswordVisibility('password')" title="Toggle password visibility">
+                👁
+              </button>
+            </div>
+          </div>
+
+          <div class="form-row-between">
+            <label class="checkbox-label">
+              <input type="checkbox" id="rememberMe" checked />
+              <span>Keep me signed in</span>
+            </label>
+          </div>
+
+          <button type="submit" class="btn btn-primary btn-block btn-lg" id="submitBtn">
+            <span class="btn-text">Sign In to Dashboard</span>
+            <span class="spinner hidden" id="loginSpinner"></span>
+          </button>
+        </form>
+
+        <!-- Toggle View Link -->
+        <div class="auth-switch-link">
+          Don't have an account? <a href="#" onclick="showAuthView('signup'); return false;">Create a user account</a>
+        </div>
+      </div>
+
+      <!-- ══════════════════════════════════════════════════════
+           VIEW 2: USER SIGN UP FORM
+      ════════════════════════════════════════════════════════ -->
+      <div id="viewSignup" class="auth-view hidden">
+        <div class="auth-card-header">
+          <h1 class="auth-title">Create User Account</h1>
+          <p class="auth-subtitle">Register a new SIMPulse User account for Sales &amp; Analytics</p>
+        </div>
+
+        <div class="signup-role-chip">
+          <span class="chip-label">ASSIGNED ROLE:</span>
+          <span class="chip-badge">USER (Sales &amp; Analytics)</span>
+        </div>
+
+        <form id="signupForm" onsubmit="handleSignupSubmit(event)">
+          <div class="form-group">
+            <label class="form-label" for="signupFullName">Full Name</label>
+            <input
+              type="text"
+              id="signupFullName"
+              class="form-input"
+              placeholder="Sarah Jenkins"
+              required
+              autocomplete="name"
+            />
+          </div>
+
+          <div class="form-group">
+            <label class="form-label" for="signupEmail">Enterprise Email</label>
+            <input
+              type="email"
+              id="signupEmail"
+              class="form-input"
+              placeholder="s.jenkins@company.com"
+              required
+              autocomplete="email"
+            />
+          </div>
+
+          <div class="form-group">
+            <label class="form-label" for="signupPassword">Password</label>
+            <div class="password-input-wrap">
+              <input
+                type="password"
+                id="signupPassword"
+                class="form-input"
+                placeholder="At least 6 characters"
+                required
+                autocomplete="new-password"
+              />
+              <button type="button" class="btn-toggle-password" onclick="togglePasswordVisibility('signupPassword')" title="Toggle password visibility">
+                👁
+              </button>
+            </div>
+          </div>
+
+          <div class="form-group">
+            <label class="form-label" for="confirmPassword">Confirm Password</label>
+            <div class="password-input-wrap">
+              <input
+                type="password"
+                id="confirmPassword"
+                class="form-input"
+                placeholder="Re-enter your password"
+                required
+                autocomplete="new-password"
+              />
+              <button type="button" class="btn-toggle-password" onclick="togglePasswordVisibility('confirmPassword')" title="Toggle password visibility">
+                👁
+              </button>
+            </div>
+          </div>
+
+          <button type="submit" class="btn btn-primary btn-block btn-lg" id="signupSubmitBtn">
+            <span class="btn-text">Create User Account</span>
+            <span class="spinner hidden" id="signupSpinner"></span>
+          </button>
+        </form>
+
+        <!-- Toggle View Link -->
+        <div class="auth-switch-link">
+          Already have an account? <a href="#" onclick="showAuthView('login'); return false;">Sign In</a>
+        </div>
+      </div>
+
+    </div>
+
+    <!-- Security Footer -->
+    <div class="auth-footer">
+      <p>Protected by Supabase Auth &amp; Role-Based Security Policies</p>
+      <p class="auth-footer-copy">&copy; 2026 SIMPulse — Confidential Enterprise Platform</p>
+    </div>
+
+  </div>
+
+  <!-- ══════════════════════════════════════════════════════
+       FORGOT PASSWORD MODAL
+  ════════════════════════════════════════════════════════ -->
+  <div id="forgotPasswordModal" class="modal-overlay hidden" role="dialog" aria-modal="true">
+    <div class="modal-card">
+      <div class="modal-header">
+        <h3 class="modal-title">Reset Password</h3>
+        <button class="modal-close" onclick="closeForgotPasswordModal()">&times;</button>
+      </div>
+      <form onsubmit="handleForgotPasswordSubmit(event)">
+        <div class="modal-body">
+          <p class="modal-desc">Enter your enterprise email address and we will send you a password reset link via Supabase Auth.</p>
+          <div class="form-group">
+            <label class="form-label" for="resetEmail">Enterprise Email</label>
+            <input type="email" id="resetEmail" class="form-input" placeholder="name@company.com" required />
+          </div>
+        </div>
+        <div class="modal-footer">
+          <button type="button" class="btn btn-secondary" onclick="closeForgotPasswordModal()">Cancel</button>
+          <button type="submit" class="btn btn-primary" id="resetSubmitBtn">Send Reset Link</button>
+        </div>
+      </form>
+    </div>
+  </div>
+
+  <script>
+    document.addEventListener("DOMContentLoaded", async () => {
+      // Check if URL contains tab parameter (e.g. login.html?view=signup)
+      const urlParams = new URLSearchParams(window.location.search);
+      if (urlParams.get("view") === "signup") {
+        showAuthView("signup");
+      }
+
+      // Check if user is already logged in
+      const user = await SIMPulseAuth.requireAuth(["user", "admin"]);
+      if (user) {
+        // Redirection handled by requireAuth based on user's real DB role
+        return;
+      }
+    });
+
+    function showAuthView(viewName) {
+      hideAuthBanners();
+      const loginView = document.getElementById("viewLogin");
+      const signupView = document.getElementById("viewSignup");
+      const tabLogin = document.getElementById("tabBtnLogin");
+      const tabSignup = document.getElementById("tabBtnSignup");
+
+      if (viewName === "signup") {
+        loginView.classList.add("hidden");
+        loginView.classList.remove("active");
+        signupView.classList.remove("hidden");
+        signupView.classList.add("active");
+        tabLogin.classList.remove("active");
+        tabSignup.classList.add("active");
+      } else {
+        signupView.classList.add("hidden");
+        signupView.classList.remove("active");
+        loginView.classList.remove("hidden");
+        loginView.classList.add("active");
+        tabSignup.classList.remove("active");
+        tabLogin.classList.add("active");
+      }
+    }
+
+    function togglePasswordVisibility(fieldId) {
+      const pwd = document.getElementById(fieldId);
+      if (pwd) pwd.type = pwd.type === "password" ? "text" : "password";
+    }
+
+    async function handleLoginSubmit(e) {
+      e.preventDefault();
+      hideAuthBanners();
+
+      const email = document.getElementById("email").value.trim();
+      const password = document.getElementById("password").value;
+      const submitBtn = document.getElementById("submitBtn");
+      const spinner = document.getElementById("loginSpinner");
+
+      if (!email || !password) {
+        showAuthError("Please enter both email and password.");
+        return;
+      }
+
+      submitBtn.disabled = true;
+      spinner.classList.remove("hidden");
+
+      try {
+        // Authenticate via Supabase Auth & Fetch SECURE role
+        const result = await SIMPulseAuth.login(email, password);
+        const role = result.role;
+
+        // Redirect strictly based on actual SECURE database role
+        if (role === "admin") {
+          window.location.href = "admin.html";
+        } else {
+          window.location.href = "index.html";
+        }
+      } catch (err) {
+        console.error("[Login] Authentication error:", err);
+        showAuthError(err.message || "Authentication failed. Please check your credentials.");
+      } finally {
+        submitBtn.disabled = false;
+        spinner.classList.add("hidden");
+      }
+    }
+
+    async function handleSignupSubmit(e) {
+      e.preventDefault();
+      hideAuthBanners();
+
+      const fullName = document.getElementById("signupFullName").value.trim();
+      const email = document.getElementById("signupEmail").value.trim();
+      const password = document.getElementById("signupPassword").value;
+      const confirmPassword = document.getElementById("confirmPassword").value;
+      const submitBtn = document.getElementById("signupSubmitBtn");
+      const spinner = document.getElementById("signupSpinner");
+
+      if (!fullName || !email || !password || !confirmPassword) {
+        showAuthError("Please complete all registration fields.");
+        return;
+      }
+
+      if (password !== confirmPassword) {
+        showAuthError("Passwords do not match. Please verify your password.");
+        return;
+      }
+
+      submitBtn.disabled = true;
+      spinner.classList.remove("hidden");
+
+      try {
+        // Execute public sign up with STRICT role = 'user'
+        const result = await SIMPulseAuth.signup(fullName, email, password, confirmPassword);
+
+        if (result.requiresEmailConfirmation) {
+          showAuthSuccess("Registration successful! Please check your email to confirm your account before signing in.");
+          document.getElementById("signupForm").reset();
+        } else {
+          showAuthSuccess("User account created successfully! Signing in to your dashboard...");
+          
+          // Auto login after sign up
+          setTimeout(async () => {
+            await SIMPulseAuth.login(email, password);
+            window.location.href = "index.html";
+          }, 1500);
+        }
+      } catch (err) {
+        console.error("[Signup] Registration error:", err);
+        showAuthError(err.message || "Account creation failed. Please check your details.");
+      } finally {
+        submitBtn.disabled = false;
+        spinner.classList.add("hidden");
+      }
+    }
+
+    function openForgotPasswordModal() {
+      document.getElementById("forgotPasswordModal").classList.remove("hidden");
+    }
+
+    function closeForgotPasswordModal() {
+      document.getElementById("forgotPasswordModal").classList.add("hidden");
+    }
+
+    async function handleForgotPasswordSubmit(e) {
+      e.preventDefault();
+      const email = document.getElementById("resetEmail").value.trim();
+      const btn = document.getElementById("resetSubmitBtn");
+
+      if (!email) return;
+
+      btn.disabled = true;
+      try {
+        await SIMPulseAuth.resetPassword(email);
+        closeForgotPasswordModal();
+        showAuthSuccess("Password reset instructions have been sent to your email.");
+      } catch (err) {
+        alert(err.message || "Failed to send password reset email.");
+      } finally {
+        btn.disabled = false;
+      }
+    }
+
+    function showAuthError(msg) {
+      hideAuthBanners();
+      const banner = document.getElementById("authErrorBanner");
+      const text = document.getElementById("authErrorMsg");
+      text.textContent = msg;
+      banner.classList.remove("hidden");
+    }
+
+    function showAuthSuccess(msg) {
+      hideAuthBanners();
+      const banner = document.getElementById("authSuccessBanner");
+      const text = document.getElementById("authSuccessMsg");
+      text.textContent = msg;
+      banner.classList.remove("hidden");
+    }
+
+    function hideAuthBanners() {
+      document.getElementById("authErrorBanner").classList.add("hidden");
+      document.getElementById("authSuccessBanner").classList.add("hidden");
+    }
+  </script>
+
+</body>
+</html>
