@@ -1,48 +1,60 @@
 /**
- * SIMPulse — Dashboard Controller (dashboard.js)
+ * SIMPulse — Admin Sales Analytics Dashboard Controller (dashboard.js)
  * ─────────────────────────────────────────────────
- * Orchestrates data loading, KPI card updates,
- * table rendering, chart rendering, and observations.
- * All display values come from the API response —
- * nothing is hardcoded.
+ * Orchestrates sales data loading, date selection, KPI card updates,
+ * daily/monthly/employee chart rendering, employee table search/sorting,
+ * CSV report export, and automated observations.
  */
 
-// ── State ──────────────────────────────────────────
-let RAW_DATA         = [];   // Full unfiltered API data
-let FILTERED_DATA    = [];   // Currently displayed data
-let TABLE_SORT_COL   = null; // Currently sorted column key
-let TABLE_SORT_DIR   = "asc";// "asc" | "desc"
-let TABLE_SEARCH_VAL = "";   // Current search term
-
-// ── DOM References ─────────────────────────────────
-const EL = {
-  loadingOverlay   : () => document.getElementById("loadingOverlay"),
-  errorBanner      : () => document.getElementById("errorBanner"),
-  errorText        : () => document.getElementById("errorText"),
-  dashboardContent : () => document.getElementById("dashboardContent"),
-  lastUpdated      : () => document.getElementById("lastUpdated"),
-  filterDestination: () => document.getElementById("filterDestination"),
-  filterDateRange  : () => document.getElementById("filterDateRange"),
-  searchInput      : () => document.getElementById("tableSearch"),
-  tableBody        : () => document.getElementById("destTableBody"),
-  tableCount       : () => document.getElementById("tableCount"),
-  refreshBtn       : () => document.getElementById("refreshBtn"),
-  exportBtn        : () => document.getElementById("exportBtn"),
+// ── Application State ──────────────────────────────
+let SALES_DATA = {
+  kpi: {},
+  daily: [],
+  monthly: [],
+  employee: []
 };
 
-// ── Initialisation ─────────────────────────────────
+let DAILY_METRIC = "sales";     // "sales" | "revenue" | "both"
+let MONTHLY_METRIC = "sales";   // "sales" | "revenue"
+let EMPLOYEE_METRIC = "td_sales"; // "td_sales" | "td_revenue" | "mtd_sales" | "mtd_revenue"
+
+let EMPLOYEE_SEARCH_VAL = "";
+let EMPLOYEE_SORT_COL = "td_sales";
+let EMPLOYEE_SORT_DIR = "desc";
+
+// ── DOM Element Selectors ──────────────────────────
+const EL = {
+  loadingOverlay: () => document.getElementById("loadingOverlay"),
+  errorBanner: () => document.getElementById("errorBanner"),
+  errorText: () => document.getElementById("errorText"),
+  dashboardContent: () => document.getElementById("dashboardContent"),
+  lastUpdated: () => document.getElementById("lastUpdated"),
+  reportDatePicker: () => document.getElementById("reportDatePicker"),
+  refreshBtn: () => document.getElementById("refreshBtn"),
+  exportBtn: () => document.getElementById("exportBtn"),
+  employeeSearchInput: () => document.getElementById("employeeSearchInput"),
+  employeeTableHead: () => document.getElementById("employeeTableHead"),
+  employeeTableBody: () => document.getElementById("employeeTableBody"),
+  employeeCountLabel: () => document.getElementById("employeeCountLabel"),
+  observationsList: () => document.getElementById("observationsList")
+};
+
+// ── Initialization ─────────────────────────────────
 document.addEventListener("DOMContentLoaded", async () => {
-  // 1. Guard check — require authenticated user or admin
+  // 1. Route guard check — require authenticated user/admin
   const user = await SIMPulseAuth.requireAuth(["user", "admin"]);
   if (!user) return;
 
-  // Render User Profile pill in header
+  // Render User Header Profile
   setupUserHeaderProfile(user);
 
-  // Check for Access Denied flash error message
+  // Check for flash access messages
   checkFlashErrorMessage();
 
+  // Bind UI Events
   bindUIEvents();
+
+  // Load Dashboard Data
   loadDashboard();
 });
 
@@ -58,17 +70,16 @@ function setupUserHeaderProfile(user) {
   if (emailEl && user.email) emailEl.textContent = user.email;
   if (avatarEl && user.email) avatarEl.textContent = user.email.charAt(0).toUpperCase();
 
-  const role = (user.role || "user").toUpperCase();
+  const role = (user.role || "admin").toUpperCase();
   if (roleEl) roleEl.textContent = role;
 
-  // Show Admin Portal link button if user has ADMIN role
   if (adminBtn && role === "ADMIN") {
     adminBtn.classList.remove("hidden");
   }
 }
 
 /**
- * Display flash error banner if redirected from unauthorized access attempt
+ * Display flash error banner if redirected from unauthorized page
  */
 function checkFlashErrorMessage() {
   const flashMsg = sessionStorage.getItem("simpulse_flash_error");
@@ -79,331 +90,253 @@ function checkFlashErrorMessage() {
 }
 
 /**
- * Wire up all interactive UI controls.
+ * Wire up interactive UI controls.
  */
 function bindUIEvents() {
-  // Logout button
+  // Sign Out
   document.getElementById("logoutBtn")?.addEventListener("click", () => SIMPulseAuth.logout());
 
-  // Refresh button
+  // Refresh Button
   EL.refreshBtn()?.addEventListener("click", () => loadDashboard());
 
-  // Destination filter dropdown
-  EL.filterDestination()?.addEventListener("change", () => applyFilters());
+  // Date Picker Change
+  EL.reportDatePicker()?.addEventListener("change", (e) => loadDashboard(e.target.value));
 
-  // Date range filter — re-fetch dashboard data for selected period date
-  EL.filterDateRange()?.addEventListener("change", () => loadDashboard());
+  // CSV Export Button
+  EL.exportBtn()?.addEventListener("click", () => exportSalesReportCSV());
 
-  // Table search
-  EL.searchInput()?.addEventListener("input", e => {
-    TABLE_SEARCH_VAL = e.target.value.trim().toLowerCase();
-    applyFilters();
+  // Daily Chart Metric Toggles
+  document.getElementById("dailyMetricToggle")?.addEventListener("click", (e) => {
+    const btn = e.target.closest(".toggle-pill");
+    if (!btn) return;
+    document.querySelectorAll("#dailyMetricToggle .toggle-pill").forEach(b => b.classList.remove("active"));
+    btn.classList.add("active");
+    DAILY_METRIC = btn.dataset.metric;
+    renderDailySalesChart(SALES_DATA.daily, DAILY_METRIC);
   });
 
-  // Table column sort — delegated from header row
-  document.getElementById("destTableHead")?.addEventListener("click", e => {
+  // Monthly Chart Metric Toggles
+  document.getElementById("monthlyMetricToggle")?.addEventListener("click", (e) => {
+    const btn = e.target.closest(".toggle-pill");
+    if (!btn) return;
+    document.querySelectorAll("#monthlyMetricToggle .toggle-pill").forEach(b => b.classList.remove("active"));
+    btn.classList.add("active");
+    MONTHLY_METRIC = btn.dataset.metric;
+    renderMonthlySalesChart(SALES_DATA.monthly, MONTHLY_METRIC);
+  });
+
+  // Employee Chart Metric Toggles
+  document.getElementById("employeeMetricToggle")?.addEventListener("click", (e) => {
+    const btn = e.target.closest(".toggle-pill");
+    if (!btn) return;
+    document.querySelectorAll("#employeeMetricToggle .toggle-pill").forEach(b => b.classList.remove("active"));
+    btn.classList.add("active");
+    EMPLOYEE_METRIC = btn.dataset.metric;
+    renderEmployeePerformanceChart(SALES_DATA.employee, EMPLOYEE_METRIC);
+  });
+
+  // Employee Table Search
+  EL.employeeSearchInput()?.addEventListener("input", (e) => {
+    EMPLOYEE_SEARCH_VAL = e.target.value.trim().toLowerCase();
+    renderEmployeeTable();
+  });
+
+  // Employee Table Column Sorting
+  EL.employeeTableHead()?.addEventListener("click", (e) => {
     const th = e.target.closest("th[data-col]");
     if (!th) return;
     const col = th.dataset.col;
-    if (TABLE_SORT_COL === col) {
-      TABLE_SORT_DIR = TABLE_SORT_DIR === "asc" ? "desc" : "asc";
+    if (EMPLOYEE_SORT_COL === col) {
+      EMPLOYEE_SORT_DIR = EMPLOYEE_SORT_DIR === "asc" ? "desc" : "asc";
     } else {
-      TABLE_SORT_COL = col;
-      TABLE_SORT_DIR = "asc";
+      EMPLOYEE_SORT_COL = col;
+      EMPLOYEE_SORT_DIR = "desc"; // Default to descending for numeric values
     }
-    renderDestinationTable(FILTERED_DATA);
-    updateSortIndicators();
+    renderEmployeeTable();
+    updateEmployeeSortIndicators();
   });
-
-  // CSV Export
-  EL.exportBtn()?.addEventListener("click", () => exportTableCSV());
 }
 
-// ── Data Loading ───────────────────────────────────
+// ── Data Loading & Orchestration ───────────────────
 /**
- * Main entry point — fetch data, then render everything.
- * @param {string} [targetDate=null] - Optional specific reporting date
+ * Main dashboard loader calling the central API layer.
+ * @param {string} [targetDate=null]
  */
 async function loadDashboard(targetDate = null) {
+  const refreshBtn = EL.refreshBtn();
+  if (refreshBtn) {
+    refreshBtn.disabled = true;
+    refreshBtn.classList.add("is-loading");
+  }
+
   showLoading(true);
   hideError();
 
   try {
-    const selectedPeriod = EL.filterDateRange()?.value || "current";
-    let reportDate = targetDate;
+    const picker = EL.reportDatePicker();
+    const dateToFetch = targetDate || picker?.value || "2026-08-24";
+    if (picker && targetDate) picker.value = targetDate;
 
-    if (!reportDate) {
-      switch (selectedPeriod) {
-        case "last30": reportDate = "2026-04-20"; break;
-        case "last90": reportDate = "2026-02-20"; break;
-        case "ytd":    reportDate = "2026-01-01"; break;
-        default:       reportDate = "2026-05-20"; break;
-      }
+    // Call single central API function
+    SALES_DATA = await fetchDashboardData(dateToFetch);
+
+    // Validate returned dataset
+    if (!SALES_DATA || !SALES_DATA.kpi) {
+      throw new Error("API returned an empty or incomplete sales dataset.");
     }
 
-    RAW_DATA = await fetchDashboardData(reportDate);
+    // Render components using real API response
+    updateKPICards(SALES_DATA.kpi);
+    renderDailySalesChart(SALES_DATA.daily, DAILY_METRIC);
+    renderMonthlySalesChart(SALES_DATA.monthly, MONTHLY_METRIC);
+    renderEmployeePerformanceChart(SALES_DATA.employee, EMPLOYEE_METRIC);
+    renderEmployeeTable();
+    renderSalesObservations(SALES_DATA);
 
-    // Validate we have usable data
-    if (!RAW_DATA || RAW_DATA.length === 0) {
-      throw new Error("API returned an empty dataset.");
-    }
-
-    // Populate destination filter dropdown
-    populateDestinationFilter(RAW_DATA);
-
-    // Apply any active filters and render
-    applyFilters();
-
-    // Update last-refreshed timestamp
+    // Update timestamp
     updateLastUpdated();
 
-    // Show dashboard
     showLoading(false);
     showDashboard(true);
-
   } catch (err) {
-    console.error("[SIMPulse] Data load failed:", err);
+    console.error("[SIMPulse Dashboard] Real API Request Failed:", err);
     showLoading(false);
-    showError(err.message || "Unable to load dashboard data.");
+    showDashboard(false); // Hide stale UI when API fails
+    showError(err.message || "Unable to load sales data. Please try again.");
+  } finally {
+    if (refreshBtn) {
+      refreshBtn.disabled = false;
+      refreshBtn.classList.remove("is-loading");
+    }
   }
 }
 
+
+// ── Executive KPI Cards ────────────────────────────
 /**
- * Apply destination filter + search filter, then re-render.
+ * Update Executive KPI Card values and comparison indicators.
+ * @param {Object} kpi
  */
-function applyFilters() {
-  const selectedDest  = EL.filterDestination()?.value || "all";
+function updateKPICards(kpi = {}) {
+  const todaySales = kpi.today_sales || 0;
+  const todayRev = kpi.today_revenue || 0;
+  const mtdSales = kpi.mtd_sales || 0;
+  const mtdRev = kpi.mtd_revenue || 0;
+  const pmSales = kpi.pm_sales || 0;
+  const pmRev = kpi.pm_revenue || 0;
 
-  let filtered = [...RAW_DATA];
+  // Calculate MoM growth for MTD vs PM
+  const salesMoM = pmSales > 0 ? ((mtdSales - pmSales) / pmSales) * 100 : 0;
+  const revMoM = pmRev > 0 ? ((mtdRev - pmRev) / pmRev) * 100 : 0;
 
-  // Destination filter
-  if (selectedDest !== "all") {
-    filtered = filtered.filter(d => d.destination === selectedDest);
-  }
+  // Today Sales & Revenue
+  setKPICard("kpiTodaySalesValue", formatNumber(todaySales));
+  setKPICard("kpiTodayRevenueValue", formatCurrency(todayRev));
+  setKPICard("kpiTodaySalesSub", `Avg ARPU: ${todaySales > 0 ? formatCurrency(todayRev / todaySales) : "—"}`);
 
-  // Search filter
-  if (TABLE_SEARCH_VAL) {
-    filtered = filtered.filter(d =>
-      d.destination.toLowerCase().includes(TABLE_SEARCH_VAL) ||
-      (d.opportunity_category || "").toLowerCase().includes(TABLE_SEARCH_VAL)
-    );
-  }
+  // Today Revenue Sublabel
+  setKPICard("kpiTodayRevenueSub", `Daily Target Pace`);
 
-  FILTERED_DATA = filtered;
+  // MTD Sales
+  setKPICard("kpiMtdSalesValue", formatNumber(mtdSales));
+  setKPICard("kpiMtdSalesSub", `${formatPercent(salesMoM)} vs prev. month`);
+  setKPIBadge("kpiMtdSalesBadge", salesMoM >= 0 ? "positive" : "negative");
 
-  // Re-render all sections
-  updateKPICards(FILTERED_DATA);
-  renderDestinationTable(FILTERED_DATA);
-  renderRevenueGrowthChart(FILTERED_DATA);
-  renderMarketShareChart(FILTERED_DATA);
-  renderARPUChart(FILTERED_DATA);
-  renderOpportunityMatrix(FILTERED_DATA);
-  renderRevenueOrderChart(FILTERED_DATA);
-  renderObservations(FILTERED_DATA);
+  // MTD Revenue
+  setKPICard("kpiMtdRevenueValue", formatCurrency(mtdRev, true));
+  setKPICard("kpiMtdRevenueSub", `${formatPercent(revMoM)} vs prev. month`);
+  setKPIBadge("kpiMtdRevenueBadge", revMoM >= 0 ? "positive" : "negative");
+
+  // Previous Month Sales & Revenue
+  setKPICard("kpiPmSalesValue", formatNumber(pmSales));
+  setKPICard("kpiPmRevenueValue", formatCurrency(pmRev, true));
 }
 
-// ── KPI Cards ──────────────────────────────────────
-/**
- * Update the four executive KPI cards.
- * @param {Array} data
- */
-function updateKPICards(data) {
-  if (!data || data.length === 0) {
-    setKPI("kpiOrders",  "—", "—",  "neutral");
-    setKPI("kpiRevenue", "—", "—",  "neutral");
-    setKPI("kpiARPU",    "—", "—",  "neutral");
-    setKPI("kpiTopDest", "—", "—",  "neutral");
-    return;
-  }
-
-  // ── Total Orders ──────────────────────────────
-  const totalOrders    = data.reduce((s, d) => s + (d.current_orders || 0), 0);
-  const prevOrders     = data.reduce((s, d) => s + (d.prev_orders    || 0), 0);
-  const orderGrowthPct = prevOrders > 0
-    ? ((totalOrders - prevOrders) / prevOrders) * 100
-    : 0;
-
-  setKPI(
-    "kpiOrders",
-    formatNumber(totalOrders),
-    `${formatPercent(orderGrowthPct)} vs prev. period`,
-    orderGrowthPct >= 0 ? "positive" : "negative"
-  );
-
-  // ── Total Revenue ─────────────────────────────
-  const totalRevenue   = data.reduce((s, d) => s + (d.current_revenue || 0), 0);
-  const prevRevenue    = data.reduce((s, d) => s + (d.prev_revenue    || 0), 0);
-  const revenueGrowth  = prevRevenue > 0
-    ? ((totalRevenue - prevRevenue) / prevRevenue) * 100
-    : 0;
-
-  setKPI(
-    "kpiRevenue",
-    formatCurrency(totalRevenue),
-    `${formatPercent(revenueGrowth)} vs prev. period`,
-    revenueGrowth >= 0 ? "positive" : "negative"
-  );
-
-  // ── Average ARPU ──────────────────────────────
-  const avgARPU = data.reduce((s, d) => s + (d.arpu || 0), 0) / data.length;
-  const arpuArr = data.map(d => d.arpu || 0);
-  const maxARPU = Math.max(...arpuArr);
-
-  setKPI(
-    "kpiARPU",
-    formatARPU(avgARPU),
-    `Max: ${formatARPU(maxARPU)}`,
-    "neutral"
-  );
-
-  // ── Top Performing Destination ────────────────
-  const topDest = data.reduce((best, d) =>
-    (d.current_revenue || 0) > (best.current_revenue || 0) ? d : best,
-    data[0]
-  );
-
-  const topShare = topDest?.market_share_pct?.toFixed(2);
-
-  setKPI(
-    "kpiTopDest",
-    topDest?.destination || "—",
-    `${topShare}% market share`,
-    "neutral"
-  );
+function setKPICard(elementId, text) {
+  const el = document.getElementById(elementId);
+  if (el) el.textContent = text;
 }
 
-/**
- * Set a KPI card's value, sub-label, and trend class.
- * @param {string} cardId
- * @param {string} value
- * @param {string} sublabel
- * @param {"positive"|"negative"|"neutral"} trend
- */
-function setKPI(cardId, value, sublabel, trend) {
-  const card = document.getElementById(cardId);
-  if (!card) return;
-
-  const valEl      = card.querySelector(".kpi-value");
-  const subEl      = card.querySelector(".kpi-sublabel");
-  const badgeEl    = card.querySelector(".kpi-badge");
-
-  if (valEl)   valEl.textContent = value;
-  if (subEl)   subEl.textContent = sublabel;
-
-  if (badgeEl) {
-    badgeEl.className = `kpi-badge kpi-badge--${trend}`;
-    const icons = { positive: "▲", negative: "▼", neutral: "●" };
-    badgeEl.textContent = icons[trend] || "●";
-  }
+function setKPIBadge(badgeId, trend) {
+  const badge = document.getElementById(badgeId);
+  if (!badge) return;
+  badge.className = `kpi-badge kpi-badge--${trend}`;
+  badge.textContent = trend === "positive" ? "▲" : trend === "negative" ? "▼" : "●";
 }
 
-// ── Destination Table ──────────────────────────────
-const TABLE_COLUMNS = [
-  { key: "destination",        label: "Destination",        type: "string",  align: "left"  },
-  { key: "current_orders",     label: "Current Orders",     type: "number",  align: "right" },
-  { key: "current_revenue",    label: "Current Revenue",    type: "currency",align: "right" },
-  { key: "prev_orders",        label: "Prev. Orders",       type: "number",  align: "right" },
-  { key: "prev_revenue",       label: "Prev. Revenue",      type: "currency",align: "right" },
-  { key: "order_growth_pct",   label: "Order Growth %",     type: "pct",     align: "right" },
-  { key: "revenue_growth_pct", label: "Revenue Growth %",   type: "pct",     align: "right" },
-  { key: "arpu",               label: "ARPU",               type: "arpu",    align: "right" },
-  { key: "market_share_pct",   label: "Market Share %",     type: "share",   align: "right" },
-  { key: "opportunity_category",label: "Opportunity",       type: "badge",   align: "center"},
+// ── Employee Performance Table ─────────────────────
+const EMPLOYEE_COLUMNS = [
+  { key: "staff_name", label: "Employee", type: "string", align: "left" },
+  { key: "td_sales", label: "Today Sales", type: "number", align: "right" },
+  { key: "td_revenue", label: "Today Revenue", type: "currency", align: "right" },
+  { key: "mtd_sales", label: "MTD Sales", type: "number", align: "right" },
+  { key: "mtd_revenue", label: "MTD Revenue", type: "currency", align: "right" }
 ];
 
 /**
- * Render the destination performance table.
- * Applies current sort before rendering.
- * @param {Array} data
+ * Render Employee Table with filtering and sorting.
  */
-function renderDestinationTable(data) {
-  const tbody = EL.tableBody();
+function renderEmployeeTable() {
+  const tbody = EL.employeeTableBody();
   if (!tbody) return;
 
-  // Apply sort
-  let sorted = [...data];
-  if (TABLE_SORT_COL) {
-    sorted.sort((a, b) => {
-      const av = a[TABLE_SORT_COL];
-      const bv = b[TABLE_SORT_COL];
+  let employees = [...(SALES_DATA.employee || [])];
+
+  // Search Filter
+  if (EMPLOYEE_SEARCH_VAL) {
+    employees = employees.filter(emp =>
+      (emp.staff_name || "").toLowerCase().includes(EMPLOYEE_SEARCH_VAL)
+    );
+  }
+
+  // Sort
+  if (EMPLOYEE_SORT_COL) {
+    employees.sort((a, b) => {
+      const av = a[EMPLOYEE_SORT_COL];
+      const bv = b[EMPLOYEE_SORT_COL];
       if (typeof av === "string") {
-        return TABLE_SORT_DIR === "asc"
-          ? av.localeCompare(bv)
-          : bv.localeCompare(av);
+        return EMPLOYEE_SORT_DIR === "asc" ? av.localeCompare(bv) : bv.localeCompare(av);
       }
-      return TABLE_SORT_DIR === "asc" ? av - bv : bv - av;
+      return EMPLOYEE_SORT_DIR === "asc" ? (av || 0) - (bv || 0) : (bv || 0) - (av || 0);
     });
   }
 
-  // Update count label
-  const countEl = EL.tableCount();
-  if (countEl) countEl.textContent = `${sorted.length} destination${sorted.length !== 1 ? "s" : ""}`;
+  // Count Label
+  const countLabel = EL.employeeCountLabel();
+  if (countLabel) {
+    countLabel.textContent = `${employees.length} staff member${employees.length !== 1 ? "s" : ""}`;
+  }
 
-  // Render rows
-  if (sorted.length === 0) {
+  if (employees.length === 0) {
     tbody.innerHTML = `
       <tr>
-        <td colspan="${TABLE_COLUMNS.length}" class="table-empty">
-          No destinations match the current filter criteria.
-        </td>
+        <td colspan="5" class="table-empty">No employees found matching the filter.</td>
       </tr>`;
     return;
   }
 
-  tbody.innerHTML = sorted.map(row => {
-    const cells = TABLE_COLUMNS.map(col => {
-      const raw = row[col.key];
-      let display = "";
-      let cellClass = `td-${col.align}`;
-
-      switch (col.type) {
-        case "string":
-          display   = `<span class="dest-name">${escapeHtml(raw || "—")}</span>`;
-          break;
-        case "number":
-          display   = formatNumber(raw);
-          break;
-        case "currency":
-          display   = formatCurrency(raw);
-          break;
-        case "arpu":
-          display   = formatARPU(raw);
-          break;
-        case "pct": {
-          const pctVal = parseFloat(raw) || 0;
-          const sign   = pctVal >= 0 ? "positive" : "negative";
-          display      = `<span class="pct pct--${sign}">${formatPercent(pctVal)}</span>`;
-          break;
-        }
-        case "share":
-          display = `${parseFloat(raw).toFixed(2)}%`;
-          break;
-        case "badge": {
-          const cat = (raw || "").toUpperCase();
-          display   = `<span class="opp-badge opp-badge--${cat}">${cat}</span>`;
-          break;
-        }
-        default:
-          display = raw ?? "—";
-      }
-
-      return `<td class="${cellClass}">${display}</td>`;
-    });
-
-    return `<tr>${cells.join("")}</tr>`;
+  tbody.innerHTML = employees.map(emp => {
+    return `
+      <tr>
+        <td class="td-left"><strong class="emp-name">${escapeHtml(emp.staff_name || "—")}</strong></td>
+        <td class="td-right">${formatNumber(emp.td_sales)}</td>
+        <td class="td-right">${formatCurrency(emp.td_revenue)}</td>
+        <td class="td-right">${formatNumber(emp.mtd_sales)}</td>
+        <td class="td-right">${formatCurrency(emp.mtd_revenue)}</td>
+      </tr>`;
   }).join("");
 }
 
 /**
- * Update sort indicator arrows in table header.
+ * Update column sort indicators on employee table.
  */
-function updateSortIndicators() {
-  document.querySelectorAll("#destTableHead th[data-col]").forEach(th => {
+function updateEmployeeSortIndicators() {
+  document.querySelectorAll("#employeeTableHead th[data-col]").forEach(th => {
     const icon = th.querySelector(".sort-icon");
     if (!icon) return;
     const col = th.dataset.col;
-    if (col === TABLE_SORT_COL) {
-      icon.textContent = TABLE_SORT_DIR === "asc" ? " ↑" : " ↓";
+    if (col === EMPLOYEE_SORT_COL) {
+      icon.textContent = EMPLOYEE_SORT_DIR === "asc" ? " ↑" : " ↓";
       th.classList.add("sorted");
     } else {
       icon.textContent = " ⇅";
@@ -412,116 +345,75 @@ function updateSortIndicators() {
   });
 }
 
-// ── Sales Observations ─────────────────────────────
+// ── Automated Sales Observations ───────────────────
 /**
- * Generate business-style observations from the data.
- * Rules are data-driven — thresholds are computed dynamically.
- * @param {Array} data
+ * Calculate data-driven sales observations and insights for executive decision making.
+ * @param {Object} data
  */
-function renderObservations(data) {
-  const container = document.getElementById("observationsList");
-  if (!container || !data || data.length === 0) return;
+function renderSalesObservations(data) {
+  const container = EL.observationsList();
+  if (!container) return;
 
   const observations = [];
 
-  // Compute aggregate thresholds
-  const totalRevenue = data.reduce((s, d) => s + (d.current_revenue || 0), 0);
-  const avgGrowth    = data.reduce((s, d) => s + (d.revenue_growth_pct || 0), 0) / data.length;
-  const avgARPU      = data.reduce((s, d) => s + (d.arpu || 0), 0) / data.length;
+  const kpi = data.kpi || {};
+  const daily = data.daily || [];
+  const employee = data.employee || [];
 
-  // Sorted helpers
-  const byRevenue    = [...data].sort((a, b) => b.current_revenue - a.current_revenue);
-  const byGrowth     = [...data].sort((a, b) => b.revenue_growth_pct - a.revenue_growth_pct);
-  const byARPU       = [...data].sort((a, b) => b.arpu - a.arpu);
-  const byDecline    = [...data].sort((a, b) => a.revenue_growth_pct - b.revenue_growth_pct);
+  // 1. Top Performing Employee Insight
+  if (employee.length > 0) {
+    const topEmpToday = [...employee].sort((a, b) => b.td_revenue - a.td_revenue)[0];
+    const topEmpMtd = [...employee].sort((a, b) => b.mtd_revenue - a.mtd_revenue)[0];
 
-  // Top revenue contributor
-  if (byRevenue[0]) {
-    const top = byRevenue[0];
-    const shareContrib = ((top.current_revenue / totalRevenue) * 100).toFixed(1);
-    observations.push({
-      type: "info",
-      icon: "📊",
-      text: `<strong>${top.destination}</strong> is the top revenue contributor at ${formatCurrency(top.current_revenue)}, representing ${shareContrib}% of total portfolio revenue.`,
-    });
+    if (topEmpToday) {
+      observations.push({
+        type: "positive",
+        icon: "🏆",
+        text: `<strong>${topEmpToday.staff_name}</strong> lead today's revenue generation with <strong>${formatCurrency(topEmpToday.td_revenue)}</strong> (${topEmpToday.td_sales} sales).`
+      });
+    }
+
+    if (topEmpMtd && topEmpMtd.staff_name !== topEmpToday?.staff_name) {
+      observations.push({
+        type: "info",
+        icon: "⭐",
+        text: `<strong>${topEmpMtd.staff_name}</strong> is the top MTD producer overall with <strong>${formatCurrency(topEmpMtd.mtd_revenue)}</strong> total revenue generated.`
+      });
+    }
   }
 
-  // Strongest growth
-  if (byGrowth[0] && byGrowth[0].revenue_growth_pct > 0) {
-    const g = byGrowth[0];
-    observations.push({
-      type: "positive",
-      icon: "📈",
-      text: `<strong>${g.destination}</strong> shows the strongest revenue growth at <strong>${formatPercent(g.revenue_growth_pct)}</strong> — a priority candidate for increased investment.`,
-    });
+  // 2. Daily Peak Trend Analysis
+  if (daily.length > 0) {
+    const sortedDaily = [...daily].sort((a, b) => b.daily_sales - a.daily_sales);
+    const peakDay = sortedDaily[0];
+    if (peakDay) {
+      observations.push({
+        type: "info",
+        icon: "📈",
+        text: `Peak daily sales volume reached <strong>${formatNumber(peakDay.daily_sales)} orders</strong> on <strong>${peakDay.order_date}</strong> generating ${formatCurrency(peakDay.daily_revenue)}.`
+      });
+    }
   }
 
-  // INVEST category destinations
-  const investDests = data.filter(d => d.opportunity_category === "INVEST");
-  if (investDests.length > 0) {
-    observations.push({
-      type: "positive",
-      icon: "🎯",
-      text: `${investDests.length} destination${investDests.length > 1 ? "s" : ""} (${investDests.map(d => d.destination).join(", ")}) are classified as <strong>INVEST</strong> — high growth with strong revenue. Allocate resources accordingly.`,
-    });
+  // 3. MTD vs PM Growth Observation
+  if (kpi.mtd_revenue && kpi.pm_revenue) {
+    const revPace = ((kpi.mtd_revenue - kpi.pm_revenue) / kpi.pm_revenue) * 100;
+    if (revPace >= 0) {
+      observations.push({
+        type: "positive",
+        icon: "🚀",
+        text: `Month-to-date revenue is trending <strong>${formatPercent(revPace)} higher</strong> compared to the previous month's baseline.`
+      });
+    } else {
+      observations.push({
+        type: "negative",
+        icon: "⚠️",
+        text: `Month-to-date revenue is currently <strong>${formatPercent(revPace)} lower</strong> than the previous month. Increase promotional campaigns to boost sales pace.`
+      });
+    }
   }
 
-  // FIX category destinations
-  const fixDests = data.filter(d => d.opportunity_category === "FIX");
-  if (fixDests.length > 0) {
-    observations.push({
-      type: "negative",
-      icon: "⚠️",
-      text: `${fixDests.length} destination${fixDests.length > 1 ? "s" : ""} (${fixDests.map(d => d.destination).join(", ")}) require immediate attention — low growth and low revenue performance.`,
-    });
-  }
-
-  // Highest ARPU destinations (above average)
-  const highARPU = byARPU.filter(d => d.arpu > avgARPU * 1.3).slice(0, 3);
-  if (highARPU.length > 0) {
-    observations.push({
-      type: "info",
-      icon: "💰",
-      text: `<strong>${highARPU.map(d => d.destination).join(", ")}</strong> exceed the portfolio ARPU average (${formatARPU(avgARPU)}) by more than 30%, indicating high-value customer segments.`,
-    });
-  }
-
-  // Declining revenue alert
-  const declining = byDecline.filter(d => d.revenue_growth_pct < -2).slice(0, 3);
-  if (declining.length > 0) {
-    observations.push({
-      type: "negative",
-      icon: "📉",
-      text: `<strong>${declining.map(d => d.destination).join(", ")}</strong> show revenue declines exceeding 2%. Review pricing strategy and market conditions for these destinations.`,
-    });
-  }
-
-  // EXPLORE opportunities
-  const exploreDests = data.filter(d => d.opportunity_category === "EXPLORE");
-  if (exploreDests.length > 0) {
-    observations.push({
-      type: "info",
-      icon: "🔍",
-      text: `<strong>${exploreDests.length} EXPLORE destination${exploreDests.length > 1 ? "s" : ""}</strong> (${exploreDests.map(d => d.destination).join(", ")}) show positive growth momentum but lower revenue — these markets merit further analysis and targeted campaigns.`,
-    });
-  }
-
-  // Portfolio growth summary
-  if (avgGrowth > 0) {
-    observations.push({
-      type: "positive",
-      icon: "✅",
-      text: `Overall portfolio revenue growth averages <strong>${formatPercent(avgGrowth)}</strong> across ${data.length} destinations — a positive signal for the current period.`,
-    });
-  } else {
-    observations.push({
-      type: "negative",
-      icon: "🔔",
-      text: `Overall portfolio revenue growth is negative at <strong>${formatPercent(avgGrowth)}</strong> — a portfolio-level review of pricing and sales strategy is recommended.`,
-    });
-  }
-
-  // Render
+  // Render observations to DOM
   container.innerHTML = observations.map(obs => `
     <div class="obs-item obs-item--${obs.type}">
       <span class="obs-icon">${obs.icon}</span>
@@ -530,52 +422,49 @@ function renderObservations(data) {
   `).join("");
 }
 
-// ── Filter / Dropdown Helpers ──────────────────────
+// ── CSV Export Functionality ───────────────────────
 /**
- * Populate the destination filter dropdown from data.
- * @param {Array} data
+ * Export full sales report to CSV format.
  */
-function populateDestinationFilter(data) {
-  const select = EL.filterDestination();
-  if (!select) return;
+function exportSalesReportCSV() {
+  if (!SALES_DATA) return;
 
-  const dests = [...new Set(data.map(d => d.destination))].sort();
-  const existingVals = Array.from(select.options).map(o => o.value);
+  const lines = [];
+  const dateStr = EL.reportDatePicker()?.value || "2026-08-24";
 
-  dests.forEach(dest => {
-    if (!existingVals.includes(dest)) {
-      const opt  = document.createElement("option");
-      opt.value  = dest;
-      opt.textContent = dest;
-      select.appendChild(opt);
-    }
+  // Section 1: KPI Summary
+  lines.push(`"SIMPulse Admin Sales Analytics Report - ${dateStr}"`);
+  lines.push("");
+  lines.push(`"Metric","Value"`);
+  lines.push(`"Today Sales","${SALES_DATA.kpi.today_sales || 0}"`);
+  lines.push(`"Today Revenue","${SALES_DATA.kpi.today_revenue || 0}"`);
+  lines.push(`"MTD Sales","${SALES_DATA.kpi.mtd_sales || 0}"`);
+  lines.push(`"MTD Revenue","${SALES_DATA.kpi.mtd_revenue || 0}"`);
+  lines.push(`"Previous Month Sales","${SALES_DATA.kpi.pm_sales || 0}"`);
+  lines.push(`"Previous Month Revenue","${SALES_DATA.kpi.pm_revenue || 0}"`);
+  lines.push("");
+
+  // Section 2: Employee Performance
+  lines.push(`"Employee Performance Breakdown"`);
+  lines.push(`"Employee","Today Sales","Today Revenue","MTD Sales","MTD Revenue"`);
+  (SALES_DATA.employee || []).forEach(emp => {
+    lines.push(`"${emp.staff_name || ''}","${emp.td_sales || 0}","${emp.td_revenue || 0}","${emp.mtd_sales || 0}","${emp.mtd_revenue || 0}"`);
   });
-}
+  lines.push("");
 
-// ── CSV Export ─────────────────────────────────────
-/**
- * Export the current filtered table data as a CSV file.
- */
-function exportTableCSV() {
-  if (!FILTERED_DATA || FILTERED_DATA.length === 0) return;
+  // Section 3: Daily Sales
+  lines.push(`"Daily Sales Trend"`);
+  lines.push(`"Date","Daily Sales","Daily Revenue"`);
+  (SALES_DATA.daily || []).forEach(d => {
+    lines.push(`"${d.order_date}","${d.daily_sales}","${d.daily_revenue}"`);
+  });
 
-  const headers = TABLE_COLUMNS.map(c => c.label);
-  const rows    = FILTERED_DATA.map(row =>
-    TABLE_COLUMNS.map(col => {
-      const v = row[col.key];
-      if (v === null || v === undefined) return "";
-      // Wrap strings containing commas in quotes
-      return typeof v === "string" && v.includes(",") ? `"${v}"` : v;
-    }).join(",")
-  );
-
-  const csv      = [headers.join(","), ...rows].join("\n");
-  const blob     = new Blob([csv], { type: "text/csv;charset=utf-8;" });
-  const url      = URL.createObjectURL(blob);
-  const link     = document.createElement("a");
-  const ts       = new Date().toISOString().slice(0, 10);
-  link.href      = url;
-  link.download  = `simpulse-export-${ts}.csv`;
+  const csvContent = lines.join("\n");
+  const blob = new Blob([csvContent], { type: "text/csv;charset=utf-8;" });
+  const url = URL.createObjectURL(blob);
+  const link = document.createElement("a");
+  link.href = url;
+  link.download = `simpulse-admin-sales-report-${dateStr}.csv`;
   link.click();
   URL.revokeObjectURL(url);
 }
@@ -593,9 +482,9 @@ function showDashboard(visible) {
 
 function showError(message) {
   const banner = EL.errorBanner();
-  const text   = EL.errorText();
+  const text = EL.errorText();
   if (banner) banner.classList.remove("hidden");
-  if (text)   text.textContent = message;
+  if (text) text.textContent = message;
 }
 
 function hideError() {
@@ -606,20 +495,18 @@ function hideError() {
 function updateLastUpdated() {
   const el = EL.lastUpdated();
   if (el) {
-    el.textContent = `Last updated: ${new Date().toLocaleString("en-US", {
+    el.textContent = `Last Updated: ${new Date().toLocaleString("en-US", {
       dateStyle: "medium",
-      timeStyle: "short",
+      timeStyle: "short"
     })}`;
   }
 }
 
-// ── Utility ────────────────────────────────────────
 /**
- * Escape HTML special characters to prevent XSS.
- * @param {string} str
- * @returns {string}
+ * Escape HTML special characters to prevent XSS
  */
 function escapeHtml(str) {
   const map = { "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#039;" };
   return String(str).replace(/[&<>"']/g, m => map[m]);
 }
+

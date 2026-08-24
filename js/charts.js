@@ -1,43 +1,32 @@
 /**
  * SIMPulse — Chart Renderers (charts.js)
  * ─────────────────────────────────────────────────
- * All Chart.js visualizations live here.
- * Each function accepts processed data and renders
- * into its respective canvas element.
+ * Renders Chart.js visualizations for PRD Admin Analytics:
+ * 1. Daily Sales & Revenue Line Chart
+ * 2. Monthly Sales Bar Chart
+ * 3. Employee Performance Horizontal Bar Chart
  */
 
-// ── Shared Palette ─────────────────────────────────
+// ── Palette & Styles ──────────────────────────────
 const PALETTE = {
-  blue       : "#1d4ed8",
-  blueLight  : "#3b82f6",
-  blueAlpha  : "rgba(29, 78, 216, 0.15)",
-  green      : "#16a34a",
-  greenAlpha : "rgba(22, 163, 74, 0.15)",
-  red        : "#dc2626",
-  redAlpha   : "rgba(220, 38, 38, 0.15)",
-  gray       : "#6b7280",
-  grayLight  : "#e5e7eb",
-  slate      : "#374151",
-  amber      : "#d97706",
-  purple     : "#7c3aed",
-  teal       : "#0d9488",
+  blue: "#1d4ed8",
+  blueLight: "#3b82f6",
+  blueAlpha: "rgba(29, 78, 216, 0.15)",
+  green: "#16a34a",
+  greenLight: "#22c55e",
+  greenAlpha: "rgba(22, 163, 74, 0.15)",
+  purple: "#7c3aed",
+  purpleAlpha: "rgba(124, 58, 237, 0.15)",
+  slate: "#374151",
+  grayLight: "#e5e7eb",
 };
 
-// Opportunity category colour map
-const OPPORTUNITY_COLORS = {
-  INVEST  : { bg: "rgba(22,  163,  74, 0.75)", border: "#16a34a" },
-  MAINTAIN: { bg: "rgba(29,  78,  216, 0.75)", border: "#1d4ed8" },
-  EXPLORE : { bg: "rgba(217, 119,   6, 0.75)", border: "#d97706" },
-  FIX     : { bg: "rgba(220,  38,  38, 0.75)", border: "#dc2626" },
-};
-
-// Store chart instances for proper destroy/re-render
+// Global chart instances cache for cleanup
 const chartInstances = {};
 
 /**
- * Destroy an existing Chart.js instance before creating a new one.
- * Prevents "Canvas already in use" warnings.
- * @param {string} id — canvas element id
+ * Destroy existing Chart instance before re-creating.
+ * @param {string} id
  */
 function destroyChart(id) {
   if (chartInstances[id]) {
@@ -46,355 +35,252 @@ function destroyChart(id) {
   }
 }
 
-// ── Shared chart defaults ──────────────────────────
-Chart.defaults.font.family = "'Inter', 'Segoe UI', system-ui, sans-serif";
-Chart.defaults.font.size   = 12;
-Chart.defaults.color       = PALETTE.slate;
-
-// ── 1. Revenue Growth Bar Chart ────────────────────
-/**
- * Render the Revenue Growth % bar chart.
- * Bars above zero are green, below zero are red.
- * @param {Array} data — raw API destination records
- */
-function renderRevenueGrowthChart(data) {
-  destroyChart("revenueGrowthChart");
-
-  const sorted   = [...data].sort((a, b) => b.revenue_growth_pct - a.revenue_growth_pct);
-  const labels   = sorted.map(d => d.destination);
-  const values   = sorted.map(d => d.revenue_growth_pct);
-  const bgColors = values.map(v => v >= 0 ? "rgba(22, 163, 74, 0.80)" : "rgba(220, 38, 38, 0.80)");
-  const borders  = values.map(v => v >= 0 ? PALETTE.green : PALETTE.red);
-
-  const ctx = document.getElementById("revenueGrowthChart").getContext("2d");
-
-  chartInstances["revenueGrowthChart"] = new Chart(ctx, {
-    type: "bar",
-    data: {
-      labels,
-      datasets: [{
-        label          : "Revenue Growth %",
-        data           : values,
-        backgroundColor: bgColors,
-        borderColor    : borders,
-        borderWidth    : 1.5,
-        borderRadius   : 4,
-        borderSkipped  : false,
-      }],
-    },
-    options: {
-      responsive         : true,
-      maintainAspectRatio: false,
-      plugins: {
-        legend: { display: false },
-        tooltip: {
-          callbacks: {
-            label: ctx => ` ${formatPercent(ctx.raw)} revenue growth`,
-          },
-        },
-      },
-      scales: {
-        x: {
-          grid  : { display: false },
-          ticks : { maxRotation: 45, minRotation: 30 },
-        },
-        y: {
-          grid: { color: PALETTE.grayLight },
-          ticks: {
-            callback: v => `${v > 0 ? "+" : ""}${v}%`,
-          },
-        },
-      },
-    },
-  });
+// Chart.js defaults
+if (typeof Chart !== "undefined") {
+  Chart.defaults.font.family = "'Inter', 'Segoe UI', system-ui, sans-serif";
+  Chart.defaults.font.size = 12;
+  Chart.defaults.color = PALETTE.slate;
 }
 
-// ── 2. Market Share Donut Chart ─────────────────────
+// ── 1. Daily Sales & Revenue Line Chart ─────────────
 /**
- * Render the Market Contribution donut chart.
- * @param {Array} data — raw API destination records
+ * Render Daily Sales & Revenue Trend Line Chart.
+ * @param {Array} dailyData - Array of { order_date, daily_sales, daily_revenue }
+ * @param {string} [metric="sales"] - "sales" | "revenue" | "both"
  */
-function renderMarketShareChart(data) {
-  destroyChart("marketShareChart");
+function renderDailySalesChart(dailyData = [], metric = "sales") {
+  destroyChart("dailySalesChart");
 
-  // Sort descending, group small slices into "Others"
-  const sorted = [...data].sort((a, b) => b.market_share_pct - a.market_share_pct);
-  const TOP_N  = 10;
-  const top    = sorted.slice(0, TOP_N);
-  const rest   = sorted.slice(TOP_N);
+  const canvas = document.getElementById("dailySalesChart");
+  if (!canvas || !dailyData || dailyData.length === 0) return;
 
-  const labels = top.map(d => d.destination);
-  const values = top.map(d => d.market_share_pct);
+  const labels = dailyData.map(d => {
+    const parts = d.order_date.split("-");
+    if (parts.length === 3) return `${parts[2]}/${parts[1]}`;
+    return d.order_date;
+  });
 
-  if (rest.length > 0) {
-    const othersSum = rest.reduce((s, d) => s + d.market_share_pct, 0);
-    labels.push("Others");
-    values.push(parseFloat(othersSum.toFixed(2)));
+  const datasets = [];
+
+  if (metric === "sales" || metric === "both") {
+    datasets.push({
+      label: "Daily Sales (Orders)",
+      data: dailyData.map(d => d.daily_sales),
+      borderColor: PALETTE.blue,
+      backgroundColor: PALETTE.blueAlpha,
+      borderWidth: 2.5,
+      tension: 0.35,
+      fill: metric !== "both",
+      pointRadius: 3,
+      pointHoverRadius: 6,
+      yAxisID: "ySales"
+    });
   }
 
-  // Professional multi-tone palette (not garish)
-  const donutPalette = [
-    "#1d4ed8","#2563eb","#3b82f6","#60a5fa",
-    "#16a34a","#22c55e","#4ade80",
-    "#d97706","#f59e0b","#fcd34d",
-    "#7c3aed","#9333ea",
-  ];
+  if (metric === "revenue" || metric === "both") {
+    datasets.push({
+      label: "Daily Revenue (₹)",
+      data: dailyData.map(d => d.daily_revenue),
+      borderColor: PALETTE.green,
+      backgroundColor: PALETTE.greenAlpha,
+      borderWidth: 2.5,
+      tension: 0.35,
+      fill: metric !== "both",
+      pointRadius: 3,
+      pointHoverRadius: 6,
+      yAxisID: metric === "both" ? "yRevenue" : "ySales"
+    });
+  }
 
-  const ctx = document.getElementById("marketShareChart").getContext("2d");
-
-  chartInstances["marketShareChart"] = new Chart(ctx, {
-    type: "doughnut",
-    data: {
-      labels,
-      datasets: [{
-        data           : values,
-        backgroundColor: donutPalette.slice(0, labels.length),
-        borderColor    : "#ffffff",
-        borderWidth    : 2,
-        hoverOffset    : 8,
-      }],
+  const scales = {
+    x: {
+      grid: { display: false },
+      ticks: { maxRotation: 45 }
     },
+    ySales: {
+      type: "linear",
+      position: "left",
+      grid: { color: PALETTE.grayLight },
+      title: {
+        display: true,
+        text: metric === "revenue" ? "Revenue (₹)" : "Sales Volume (Orders)",
+        font: { size: 11, weight: "600" }
+      },
+      ticks: {
+        callback: v => metric === "revenue" ? formatCurrency(v, true) : formatNumber(v)
+      }
+    }
+  };
+
+  if (metric === "both") {
+    scales.yRevenue = {
+      type: "linear",
+      position: "right",
+      grid: { display: false },
+      title: {
+        display: true,
+        text: "Revenue (₹)",
+        font: { size: 11, weight: "600" },
+        color: PALETTE.green
+      },
+      ticks: {
+        callback: v => formatCurrency(v, true)
+      }
+    };
+  }
+
+  const ctx = canvas.getContext("2d");
+  chartInstances["dailySalesChart"] = new Chart(ctx, {
+    type: "line",
+    data: { labels, datasets },
     options: {
-      responsive         : true,
+      responsive: true,
       maintainAspectRatio: false,
-      cutout             : "62%",
+      interaction: { mode: "index", intersect: false },
       plugins: {
         legend: {
-          position : "right",
-          labels   : {
-            boxWidth    : 12,
-            padding     : 14,
-            font        : { size: 11 },
-            usePointStyle: true,
-            pointStyle  : "rectRounded",
-          },
+          display: metric === "both",
+          position: "top"
         },
         tooltip: {
           callbacks: {
-            label: ctx => ` ${ctx.label}: ${ctx.raw.toFixed(2)}% market share`,
-          },
-        },
+            title: ctx => `Date: ${dailyData[ctx[0].dataIndex]?.order_date || ""}`,
+            label: ctx => {
+              const isRev = ctx.dataset.label.includes("Revenue");
+              return ` ${ctx.dataset.label}: ${isRev ? formatCurrency(ctx.raw) : formatNumber(ctx.raw)}`;
+            }
+          }
+        }
       },
-    },
+      scales
+    }
   });
 }
 
-// ── 3. ARPU Horizontal Bar Chart ───────────────────
+// ── 2. Monthly Sales Bar Chart ──────────────────────
 /**
- * Render the ARPU horizontal bar chart.
- * @param {Array} data — raw API destination records
+ * Render Monthly Performance Bar Chart.
+ * @param {Array} monthlyData - Array of { order_month, month_label, monthly_sales, monthly_revenue }
+ * @param {string} [metric="sales"] - "sales" | "revenue"
  */
-function renderARPUChart(data) {
-  destroyChart("arpuChart");
+function renderMonthlySalesChart(monthlyData = [], metric = "sales") {
+  destroyChart("monthlySalesChart");
 
-  const sorted = [...data].sort((a, b) => b.arpu - a.arpu);
-  const labels = sorted.map(d => d.destination);
-  const values = sorted.map(d => d.arpu);
+  const canvas = document.getElementById("monthlySalesChart");
+  if (!canvas || !monthlyData || monthlyData.length === 0) return;
 
-  // Gradient intensity: darker blue for highest ARPU
-  const maxArpu  = Math.max(...values);
-  const bgColors = values.map(v => {
-    const ratio   = v / maxArpu;
-    const opacity = 0.35 + ratio * 0.55;
-    return `rgba(29, 78, 216, ${opacity.toFixed(2)})`;
-  });
+  const labels = monthlyData.map(d => d.month_label || d.order_month);
+  const values = monthlyData.map(d => metric === "revenue" ? d.monthly_revenue : d.monthly_sales);
 
-  const ctx = document.getElementById("arpuChart").getContext("2d");
-
-  chartInstances["arpuChart"] = new Chart(ctx, {
+  const ctx = canvas.getContext("2d");
+  chartInstances["monthlySalesChart"] = new Chart(ctx, {
     type: "bar",
     data: {
       labels,
       datasets: [{
-        label          : "ARPU (USD)",
-        data           : values,
-        backgroundColor: bgColors,
-        borderColor    : PALETTE.blue,
-        borderWidth    : 1,
-        borderRadius   : 4,
-        borderSkipped  : false,
-      }],
+        label: metric === "revenue" ? "Monthly Revenue (₹)" : "Monthly Sales (Orders)",
+        data: values,
+        backgroundColor: metric === "revenue" ? PALETTE.greenLight : PALETTE.blueLight,
+        borderColor: metric === "revenue" ? PALETTE.green : PALETTE.blue,
+        borderWidth: 1.5,
+        borderRadius: 4
+      }]
     },
     options: {
-      responsive         : true,
+      responsive: true,
       maintainAspectRatio: false,
-      indexAxis          : "y",
       plugins: {
         legend: { display: false },
         tooltip: {
           callbacks: {
-            label: ctx => ` ARPU: ${formatARPU(ctx.raw)}`,
-          },
-        },
+            label: ctx => ` ${metric === "revenue" ? formatCurrency(ctx.raw) : formatNumber(ctx.raw)}`
+          }
+        }
+      },
+      scales: {
+        x: { grid: { display: false } },
+        y: {
+          grid: { color: PALETTE.grayLight },
+          ticks: {
+            callback: v => metric === "revenue" ? formatCurrency(v, true) : formatNumber(v)
+          }
+        }
+      }
+    }
+  });
+}
+
+// ── 3. Employee Performance Horizontal Bar Chart ───
+/**
+ * Render Employee Ranking Horizontal Bar Chart.
+ * @param {Array} employeeData - Array of employee records
+ * @param {string} [metric="td_sales"] - "td_sales" | "td_revenue" | "mtd_sales" | "mtd_revenue"
+ */
+function renderEmployeePerformanceChart(employeeData = [], metric = "td_sales") {
+  destroyChart("employeePerformanceChart");
+
+  const canvas = document.getElementById("employeePerformanceChart");
+  if (!canvas || !employeeData || employeeData.length === 0) return;
+
+  // Sort employee data descending by chosen metric
+  const sorted = [...employeeData].sort((a, b) => (b[metric] || 0) - (a[metric] || 0));
+
+  const labels = sorted.map(d => d.staff_name);
+  const values = sorted.map(d => d[metric] || 0);
+
+  const isRevenueMetric = metric.includes("revenue");
+
+  const ctx = canvas.getContext("2d");
+  chartInstances["employeePerformanceChart"] = new Chart(ctx, {
+    type: "bar",
+    data: {
+      labels,
+      datasets: [{
+        label: getMetricLabel(metric),
+        data: values,
+        backgroundColor: isRevenueMetric ? "rgba(22, 163, 74, 0.75)" : "rgba(29, 78, 216, 0.75)",
+        borderColor: isRevenueMetric ? PALETTE.green : PALETTE.blue,
+        borderWidth: 1.5,
+        borderRadius: 4
+      }]
+    },
+    options: {
+      responsive: true,
+      maintainAspectRatio: false,
+      indexAxis: "y",
+      plugins: {
+        legend: { display: false },
+        tooltip: {
+          callbacks: {
+            label: ctx => ` ${getMetricLabel(metric)}: ${isRevenueMetric ? formatCurrency(ctx.raw) : formatNumber(ctx.raw)}`
+          }
+        }
       },
       scales: {
         x: {
           grid: { color: PALETTE.grayLight },
           ticks: {
-            callback: v => `$${v.toLocaleString()}`,
-          },
+            callback: v => isRevenueMetric ? formatCurrency(v, true) : formatNumber(v)
+          }
         },
         y: {
-          grid: { display: false },
-          ticks: { font: { size: 11 } },
-        },
-      },
-    },
+          grid: { display: false }
+        }
+      }
+    }
   });
 }
 
-// ── 4. Opportunity Matrix Scatter Chart ────────────
 /**
- * Render the Opportunity Matrix (Revenue vs Growth %).
- * Points are coloured and grouped by opportunity_category.
- * @param {Array} data — raw API destination records
+ * Utility helper to get readable chart label from metric key
  */
-function renderOpportunityMatrix(data) {
-  destroyChart("opportunityChart");
-
-  // Group data by category
-  const groups = {};
-  data.forEach(d => {
-    const cat = d.opportunity_category || "FIX";
-    if (!groups[cat]) groups[cat] = [];
-    groups[cat].push({
-      x   : d.current_revenue,
-      y   : d.revenue_growth_pct,
-      label: d.destination,
-    });
-  });
-
-  const datasets = Object.entries(groups).map(([cat, points]) => ({
-    label          : cat,
-    data           : points,
-    backgroundColor: (OPPORTUNITY_COLORS[cat] || OPPORTUNITY_COLORS.FIX).bg,
-    borderColor    : (OPPORTUNITY_COLORS[cat] || OPPORTUNITY_COLORS.FIX).border,
-    borderWidth    : 1.5,
-    pointRadius    : 7,
-    pointHoverRadius: 10,
-  }));
-
-  const ctx = document.getElementById("opportunityChart").getContext("2d");
-
-  chartInstances["opportunityChart"] = new Chart(ctx, {
-    type: "scatter",
-    data: { datasets },
-    options: {
-      responsive         : true,
-      maintainAspectRatio: false,
-      plugins: {
-        legend: {
-          position: "top",
-          labels  : { usePointStyle: true, padding: 16, font: { size: 11 } },
-        },
-        tooltip: {
-          callbacks: {
-            label: ctx => {
-              const pt = ctx.raw;
-              return [
-                ` ${pt.label}`,
-                ` Revenue: ${formatCurrency(pt.x)}`,
-                ` Growth: ${formatPercent(pt.y)}`,
-              ];
-            },
-          },
-        },
-      },
-      scales: {
-        x: {
-          title: {
-            display: true,
-            text   : "Current Revenue (USD)",
-            font   : { size: 11, weight: "600" },
-            color  : PALETTE.slate,
-          },
-          grid : { color: PALETTE.grayLight },
-          ticks: { callback: v => `$${(v / 1000).toFixed(0)}k` },
-        },
-        y: {
-          title: {
-            display: true,
-            text   : "Revenue Growth %",
-            font   : { size: 11, weight: "600" },
-            color  : PALETTE.slate,
-          },
-          grid : { color: PALETTE.grayLight },
-          ticks: { callback: v => `${v > 0 ? "+" : ""}${v}%` },
-        },
-      },
-    },
-  });
+function getMetricLabel(metricKey) {
+  switch (metricKey) {
+    case "td_sales": return "Today Sales";
+    case "td_revenue": return "Today Revenue";
+    case "mtd_sales": return "MTD Sales";
+    case "mtd_revenue": return "MTD Revenue";
+    default: return "Value";
+  }
 }
 
-// ── 5. Revenue vs Orders Scatter Chart ─────────────
-/**
- * Render the Revenue vs Orders relationship scatter chart.
- * @param {Array} data — raw API destination records
- */
-function renderRevenueOrderChart(data) {
-  destroyChart("revenueOrderChart");
-
-  const points = data.map(d => ({
-    x    : d.current_orders,
-    y    : d.current_revenue,
-    label: d.destination,
-  }));
-
-  const ctx = document.getElementById("revenueOrderChart").getContext("2d");
-
-  chartInstances["revenueOrderChart"] = new Chart(ctx, {
-    type: "scatter",
-    data: {
-      datasets: [{
-        label          : "Destinations",
-        data           : points,
-        backgroundColor: "rgba(29, 78, 216, 0.65)",
-        borderColor    : PALETTE.blue,
-        borderWidth    : 1.5,
-        pointRadius    : 7,
-        pointHoverRadius: 10,
-      }],
-    },
-    options: {
-      responsive         : true,
-      maintainAspectRatio: false,
-      plugins: {
-        legend: { display: false },
-        tooltip: {
-          callbacks: {
-            label: ctx => {
-              const pt = ctx.raw;
-              return [
-                ` ${pt.label}`,
-                ` Orders: ${formatNumber(pt.x)}`,
-                ` Revenue: ${formatCurrency(pt.y)}`,
-              ];
-            },
-          },
-        },
-      },
-      scales: {
-        x: {
-          title: {
-            display: true,
-            text   : "Current Orders",
-            font   : { size: 11, weight: "600" },
-            color  : PALETTE.slate,
-          },
-          grid : { color: PALETTE.grayLight },
-          ticks: { callback: v => formatNumber(v) },
-        },
-        y: {
-          title: {
-            display: true,
-            text   : "Current Revenue (USD)",
-            font   : { size: 11, weight: "600" },
-            color  : PALETTE.slate,
-          },
-          grid : { color: PALETTE.grayLight },
-          ticks: { callback: v => `$${(v / 1000).toFixed(0)}k` },
-        },
-      },
-    },
-  });
-}
