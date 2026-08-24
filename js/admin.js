@@ -274,6 +274,8 @@ function handleAddUserSubmit(e) {
 
 /**
  * Audit Logs Rendering
+ * NOTE: localStorage activity logs are for UI display and demo monitoring only.
+ * Production audit trails must be enforced and persisted server-side in PostgreSQL.
  */
 function renderActivityLogs(filterQuery = "") {
   const tbody = document.getElementById("logsTableBody");

@@ -277,28 +277,78 @@ and strategic analysis sections.
 
 ------------------------------------------------------------------------
 
-## 🔐 Security
+## 🔐 Security & Access Control
 
-SIMPulse uses Supabase authentication and role-based access control.
+SIMPulse uses Supabase Auth, role-based access control, and PostgreSQL Row Level Security (RLS).
 
-The application includes:
+Key Security Features:
+- **Authenticated User Sessions**: Managed strictly via standard Supabase JWT tokens.
+- **Client Credential Isolation**: Only public Supabase `anon` keys are exposed in frontend code. No `service_role` keys, database passwords, or private keys exist in the repository.
+- **Role Elevation Guard**: `fetchUserSecureRole()` relies on server-controlled `app_metadata` and the database `profiles` table. User-editable `user_metadata` CANNOT grant administrator privileges.
+- **Public Signup Isolation**: Public registration strictly creates accounts with `role = 'user'`.
+- **UI Route Protection**: Unauthorized URL access to `admin.html` is guarded on load and redirects with visual flash feedback.
+- **Audit Trails**: Note that client-side `localStorage` activity logs are for UI display and demo inspection only. Production audit trails must be recorded server-side in database tables.
 
--   Authenticated user sessions
--   Role-based dashboard redirection
--   Admin route protection
--   Password reset functionality
--   Supabase Auth integration
--   Database Row Level Security (RLS)
+### 🛡️ Recommended Supabase Database & RLS Setup
+
+To enforce database-level authorization in Supabase, execute the following SQL in your Supabase SQL Editor:
+
+```sql
+-- 1. Create Profiles Table with Role Constraint
+create table if not exists public.profiles (
+  id uuid references auth.users on delete cascade primary key,
+  full_name text,
+  email text,
+  role text default 'user' check (role in ('user', 'admin')),
+  created_at timestamp with time zone default timezone('utc'::text, now()) not null
+);
+
+-- 2. Enable Row Level Security (RLS)
+alter table public.profiles enable row level security;
+
+-- 3. RLS Policies for Profiles
+-- Users can read their own profile; Admins can read all profiles
+create policy "Read profiles policy" on public.profiles
+  for select using (
+    auth.uid() = id or (select (auth.jwt() -> 'app_metadata' ->> 'role')) = 'admin'
+  );
+
+-- Users can update only non-role fields of their own profile
+create policy "Users update own profile" on public.profiles
+  for update using (auth.uid() = id)
+  with check (
+    auth.uid() = id and role = (select role from public.profiles where id = auth.uid())
+  );
+
+-- 4. Trigger to Automatically Create Profile on Signup
+create or replace function public.handle_new_user()
+returns trigger as $$
+begin
+  insert into public.profiles (id, full_name, email, role)
+  values (
+    new.id,
+    coalesce(new.raw_user_meta_data->>'full_name', ''),
+    new.email,
+    'user' -- Public signups ALWAYS default strictly to user
+  );
+  return new;
+end;
+$$ language plpgsql security definer;
+
+-- Trigger execution binding
+drop trigger if exists on_auth_user_created on auth.users;
+create trigger on_auth_user_created
+  after insert on auth.users
+  for each row execute procedure public.handle_new_user();
+```
 
 ### Important
 
-Do **not** commit private credentials, passwords, service-role keys, or
-other secrets to GitHub.
+Do **not** commit private credentials, passwords, service-role keys, or other secrets to GitHub.
 
-If the project contains environment variables or private credentials,
-add them to `.gitignore`.
+If the project contains environment variables or private credentials, add them to `.gitignore`.
 
-Example:
+Example `.gitignore`:
 
 ``` gitignore
 .env
@@ -307,8 +357,7 @@ node_modules/
 .vscode/
 ```
 
-Only public/client-safe configuration should be exposed in frontend
-code.
+Only public/client-safe configuration should be exposed in frontend code.
 
 ------------------------------------------------------------------------
 

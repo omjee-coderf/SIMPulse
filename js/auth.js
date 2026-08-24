@@ -10,6 +10,12 @@
 const SUPABASE_URL = "https://pmfiamiebikefcraahjd.supabase.co";
 const SUPABASE_ANON_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InBtZmlhbWllYmlrZWZjcmFhaGpkIiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODE2ODgyNDAsImV4cCI6MjA5NzI2NDI0MH0.Z9XCGCz9-_fuIFocdqUXauLrgsNo91ZNrMLIBGpI7EA";
 
+// Centralized credentials exposed on window object for shared module access
+if (typeof window !== "undefined") {
+  window.SUPABASE_URL = SUPABASE_URL;
+  window.SUPABASE_ANON_KEY = SUPABASE_ANON_KEY;
+}
+
 // Storage key for caching session role
 const STORAGE_ROLE_KEY = "simpulse_auth_role";
 
@@ -68,18 +74,23 @@ const SIMPulseAuth = {
   /**
    * Determine the current user's SECURE role from Supabase metadata/profiles.
    * Priority:
-   * 1. Supabase app_metadata.role or user_metadata.role
+   * 1. Supabase app_metadata.role (server-controlled JWT claim)
    * 2. Supabase profiles database table lookup
    * 3. Default strictly to 'user' for security.
+   * Note: user_metadata is user-editable via client SDK and MUST NOT grant admin privileges.
    * Frontend inputs or localStorage NEVER grant or escalate role!
    */
   async fetchUserSecureRole(user) {
     if (!user) return "user";
 
-    // 1. Check Supabase JWT app_metadata or user_metadata
-    let role = user.app_metadata?.role || user.user_metadata?.role;
+    let role = null;
 
-    // 2. Check Supabase profiles table if role is not in metadata
+    // 1. Check secure Supabase JWT app_metadata (server-controlled)
+    if (user.app_metadata && user.app_metadata.role) {
+      role = user.app_metadata.role;
+    }
+
+    // 2. Check Supabase profiles table if role is not in app_metadata
     if (!role && user.id) {
       const client = getSupabaseClient();
       if (client) {
@@ -97,6 +108,11 @@ const SIMPulseAuth = {
           // Table query exception handled silently
         }
       }
+    }
+
+    // 3. Fallback check for user_metadata (ONLY allow 'user', never elevate to 'admin')
+    if (!role && user.user_metadata && user.user_metadata.role === "user") {
+      role = "user";
     }
 
     role = (role || "user").toLowerCase();
@@ -332,7 +348,9 @@ const SIMPulseAuth = {
   },
 
   /**
-   * Helper — Record audit activity log into localStorage for UI inspection.
+   * Helper — Record activity log into localStorage for UI/demo inspection.
+   * NOTE: Client localStorage activity logs are for local UI inspection and demo monitoring only.
+   * They are NOT a secure audit trail. Real audit logging must be enforced server-side.
    */
   recordActivityLog(email, role, eventType, details) {
     const logs = JSON.parse(localStorage.getItem("simpulse_activity_logs") || "[]");
@@ -343,7 +361,7 @@ const SIMPulseAuth = {
       role: role,
       event: eventType,
       details: details,
-      ip: "192.168.1.100",
+      ip: "Not captured",
       status: "Success"
     });
     // Retain last 100 entries
@@ -352,4 +370,6 @@ const SIMPulseAuth = {
 };
 
 // Global export
+SIMPulseAuth.SUPABASE_URL = SUPABASE_URL;
+SIMPulseAuth.SUPABASE_ANON_KEY = SUPABASE_ANON_KEY;
 window.SIMPulseAuth = SIMPulseAuth;

@@ -22,22 +22,31 @@
  */
 
 // ── Configuration ──────────────────────────────────
-const API_URL = "https://pmfiamiebikefcraahjd.supabase.co/rest/v1/rpc/destination_insights";
+const SUPABASE_BASE_URL = typeof window !== "undefined" && window.SUPABASE_URL
+  ? window.SUPABASE_URL
+  : "https://pmfiamiebikefcraahjd.supabase.co";
+
+const CLIENT_ANON_KEY = typeof window !== "undefined" && window.SUPABASE_ANON_KEY
+  ? window.SUPABASE_ANON_KEY
+  : "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InBtZmlhbWllYmlrZWZjcmFhaGpkIiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODE2ODgyNDAsImV4cCI6MjA5NzI2NDI0MH0.Z9XCGCz9-_fuIFocdqUXauLrgsNo91ZNrMLIBGpI7EA";
+
+const API_URL = `${SUPABASE_BASE_URL}/rest/v1/rpc/destination_insights`;
 const API_TIMEOUT_MS = 15000;                  // 15-second request timeout
 
 /**
  * Fetch dashboard data from the configured API endpoint.
  * Returns a promise that resolves to an array of destination records.
  *
+ * @param {string} [reportDate="2026-05-20"] - Reporting date formatted as YYYY-MM-DD
  * @returns {Promise<Array>}
  */
-async function fetchDashboardData() {
+async function fetchDashboardData(reportDate = "2026-05-20") {
   const controller = new AbortController();
   const timeoutId  = setTimeout(() => controller.abort(), API_TIMEOUT_MS);
 
   try {
-    // Get active session token if available
-    let authToken = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InBtZmlhbWllYmlrZWZjcmFhaGpkIiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODE2ODgyNDAsImV4cCI6MjA5NzI2NDI0MH0.Z9XCGCz9-_fuIFocdqUXauLrgsNo91ZNrMLIBGpI7EA";
+    // Get active session token if available, fallback to client anon key
+    let authToken = CLIENT_ANON_KEY;
     if (typeof SIMPulseAuth !== "undefined") {
       const session = await SIMPulseAuth.getSession();
       if (session && session.access_token) {
@@ -52,12 +61,12 @@ async function fetchDashboardData() {
         "Accept": "application/json",
         "Content-Type": "application/json",
 
-        "apikey": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InBtZmlhbWllYmlrZWZjcmFhaGpkIiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODE2ODgyNDAsImV4cCI6MjA5NzI2NDI0MH0.Z9XCGCz9-_fuIFocdqUXauLrgsNo91ZNrMLIBGpI7EA",
+        "apikey": CLIENT_ANON_KEY,
         "Authorization": `Bearer ${authToken}`
       },
 
       body: JSON.stringify({
-        report_date: "2026-05-20"
+        report_date: reportDate
       }),
 
       signal: controller.signal,

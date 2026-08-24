@@ -91,8 +91,8 @@ function bindUIEvents() {
   // Destination filter dropdown
   EL.filterDestination()?.addEventListener("change", () => applyFilters());
 
-  // Date range filter
-  EL.filterDateRange()?.addEventListener("change", () => applyFilters());
+  // Date range filter — re-fetch dashboard data for selected period date
+  EL.filterDateRange()?.addEventListener("change", () => loadDashboard());
 
   // Table search
   EL.searchInput()?.addEventListener("input", e => {
@@ -122,13 +122,26 @@ function bindUIEvents() {
 // ── Data Loading ───────────────────────────────────
 /**
  * Main entry point — fetch data, then render everything.
+ * @param {string} [targetDate=null] - Optional specific reporting date
  */
-async function loadDashboard() {
+async function loadDashboard(targetDate = null) {
   showLoading(true);
   hideError();
 
   try {
-    RAW_DATA = await fetchDashboardData();
+    const selectedPeriod = EL.filterDateRange()?.value || "current";
+    let reportDate = targetDate;
+
+    if (!reportDate) {
+      switch (selectedPeriod) {
+        case "last30": reportDate = "2026-04-20"; break;
+        case "last90": reportDate = "2026-02-20"; break;
+        case "ytd":    reportDate = "2026-01-01"; break;
+        default:       reportDate = "2026-05-20"; break;
+      }
+    }
+
+    RAW_DATA = await fetchDashboardData(reportDate);
 
     // Validate we have usable data
     if (!RAW_DATA || RAW_DATA.length === 0) {
